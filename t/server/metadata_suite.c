@@ -57,9 +57,11 @@ int main(int argc, char* argv[])
     plan(NO_PLAN);
 
     // keep the order
-
     unifycr_set_file_attribute_test();
     unifycr_get_file_attribute_test();
+
+    unify_set_file_attribute_test();
+    unify_get_file_attribute_test();
 
 
     /*

@@ -98,12 +98,30 @@ int unifycr_get_file_attribute(int gfid,
                                unifycr_file_attr_t* ptr_attr_val);
 
 /**
+ * Retrieve file attributes for all children from the KV-Store .
+ *
+ * @param [in] gfid
+ * @param[out] *ptr_attr_val
+ * @return UNIFYCR_SUCCESS on success
+ */
+int unify_get_child_file_attributes(int gfid, int* num_values,
+                                    unifycr_file_attr_t** attr_vals);
+/**
  * Store a File attribute to the KV-Store.
  *
  * @param[in] *ptr_attr_val
  * @return UNIFYCR_SUCCESS on success
  */
 int unifycr_set_file_attribute(unifycr_file_attr_t* ptr_attr_val);
+
+/**
+ * Store a file attribute to the KV-Store.
+ *
+ * @param[in] *ptr_attr_val
+ * @param[in] parent_gfid The parents gfid.
+ * @return UNIFYCR_SUCCESS on success
+ */
+int unify_set_file_attribute(unifycr_file_attr_t* fattr_ptr, int parent_gfid);
 
 /**
  * Store File attributes to the KV-Store.

@@ -26,4 +26,8 @@ int unifycr_set_file_attribute_test(void);
 int unifycr_get_file_attribute_test(void);
 int unifycr_get_file_extents_test(void);
 
+/* test setting file attribute with parent */
+int unify_set_file_attribute_test(void);
+int unify_get_file_attribute_test(void);
+
 #endif /* METADATA_SUITE_H */

@@ -62,7 +62,10 @@ int unifycr_val_lens[MAX_META_PER_SEND] = {0};
 int fattr_key_lens[MAX_FILE_CNT_PER_NODE] = {0};
 int fattr_val_lens[MAX_FILE_CNT_PER_NODE] = {0};
 
-struct index_t* unifycr_indexes[2];
+/* index structures */
+struct index_t* unifycr_indexes[2] = {0};
+struct index_t* unify_sec_indexes[2] = {0};
+
 size_t max_recs_per_slice;
 
 void debug_log_key_val(const char* ctx,
@@ -176,6 +179,10 @@ int meta_init_store(unifycr_cfg_t* cfg)
     /*this index is created for storing file attribute metadata*/
     unifycr_indexes[1] = create_global_index(md, ser_ratio, 1,
                          LEVELDB, MDHIM_INT_KEY, "file_attr");
+
+    /* secondary indexes */
+    unify_sec_indexes[0] = create_global_index(md, ser_ratio, 1,
+                           LEVELDB, MDHIM_INT_KEY, NULL);
 
     MPI_Comm_size(md->mdhim_comm, &md_size);
 
@@ -368,6 +375,73 @@ int unifycr_set_file_attribute(unifycr_file_attr_t* fattr_ptr)
     return rc;
 }
 
+int unify_set_file_attribute(unifycr_file_attr_t* fattr_ptr, int parent_gfid)
+{
+    int rc = UNIFYCR_SUCCESS;
+
+    struct secondary_info *secondary_info;
+    int gfid = fattr_ptr->gfid;
+    int **secondary_keys;
+    int *secondary_key_lens;
+
+    secondary_keys = malloc(sizeof(int *));
+    secondary_keys[0] = malloc(sizeof(int));
+    secondary_key_lens = malloc(sizeof(int));
+
+    *secondary_keys[0] = parent_gfid;
+    secondary_key_lens[0] = sizeof(parent_gfid);
+
+    /* create info for secondary key */
+    secondary_info = mdhimCreateSecondaryInfo(unify_sec_indexes[0],
+                                              (void **) secondary_keys, 
+                                              secondary_key_lens, 1, 
+                                              SECONDARY_GLOBAL_INFO);
+
+    printf("fattr_ptr: {gfid: 0x%x, fid: 0x%x}\n", fattr_ptr->gfid, fattr_ptr->fid); fflush(NULL);
+
+    md->primary_index = unifycr_indexes[1];
+    brm = mdhimPut(md, &gfid, sizeof(int), fattr_ptr,
+                   sizeof(unifycr_file_attr_t), secondary_info, NULL);
+
+    if (!brm || brm->error) {
+        // return UNIFYCR_ERROR_MDHIM on error
+        rc = (int)UNIFYCR_ERROR_MDHIM;
+    }
+
+    mdhimReleaseSecondaryInfo(secondary_info);
+    mdhim_full_release_msg(brm);
+
+    free(secondary_keys[0]);
+    free(secondary_keys);
+    free(secondary_key_lens);
+
+    //Commit the database
+	rc = mdhimCommit(md, md->primary_index);
+	if (rc != MDHIM_SUCCESS) {
+		printf("Error committing MDHIM database\n");
+	} else {
+		printf("Committed MDHIM database\n");
+	}
+
+    //Get the stats for the primary index
+	rc = mdhimStatFlush(md, md->primary_index);
+	if (rc != MDHIM_SUCCESS) {
+		printf("Error getting stats\n");
+	} else {
+		printf("Got stats\n");
+	}
+
+    //Get the stats for the secondary index
+	rc = mdhimStatFlush(md, unify_sec_indexes[0]);
+	if (rc != MDHIM_SUCCESS) {
+		printf("Error getting stats\n");
+	} else {
+		printf("Got stats\n");
+	}
+
+    return rc;
+}
+
 /*
  *
  */
@@ -420,6 +494,122 @@ int unifycr_get_file_attribute(int gfid,
         mdhim_full_release_msg(bgrm);
     }
 
+    return rc;
+}
+
+/*
+ *
+ */
+int unify_get_child_file_attributes(int gfid, int* num_values,
+                                    unifycr_file_attr_t** attr_vals)
+{
+    int i, tot_num = 0;
+    int rc = UNIFYCR_SUCCESS;
+    unifycr_file_attr_t* attr_p;
+    unifycr_file_attr_t* viter = *attr_vals;
+
+    struct mdhim_bgetrm_t *bgrm;
+    struct mdhim_bgetrm_t *bgrmp;
+
+    int **secondary_keys;
+    int *secondary_key_lens;
+    secondary_keys = malloc(sizeof(int *));
+    secondary_keys[0] = malloc(2 * sizeof(int));
+    secondary_key_lens = malloc(2 * sizeof(int));
+
+    *(secondary_keys[0]) = gfid;
+    *(secondary_keys[1]) = gfid;
+    secondary_key_lens[0] = sizeof(gfid);
+    secondary_key_lens[1] = sizeof(gfid);
+
+    md->primary_index = unifycr_indexes[1];
+    bgrm = mdhimBGet(md, unify_sec_indexes[0], 
+	 			     secondary_keys, secondary_key_lens, 2, MDHIM_GET_EQ);
+    printf("After mdhimBGetOp\n");fflush(NULL);
+	// if (!bgrm || bgrm->error) {
+	// 	printf("Rank: %d, Error getting next key/value given key: 0x%x from MDHIM (error: %d)\n", 
+	// 	       md->mdhim_rank, gfid, bgrm->error);
+	// } else if (bgrm->keys && bgrm->values) {
+    //     // attr_p = (unifycr_file_attr_t*)(bgrm->values[0]);
+    //     // memcpy(viter, attr_p, sizeof(unifycr_file_attr_t));
+    //     // printf("viter: {gfid: 0x%x, fid: 0x%x}, attr_p: {gfid: 0x%x, fid: 0x%x}\n", viter->gfid, viter->fid, attr_p->gfid, attr_p->fid); fflush(NULL);
+
+    //     printf("# keys = %d\n", bgrm->num_keys);fflush(NULL);
+    //     for (i = 0; i < bgrm->num_keys; i++) {
+    //         attr_p = (unifycr_file_attr_t*)(bgrm->values[i]);
+    //         memcpy(viter, attr_p, sizeof(unifycr_file_attr_t));
+    //         printf("viter: {gfid: 0x%x, fid: 0x%x}, attr_p: {gfid: 0x%x, fid: 0x%x}\n", viter->gfid, viter->fid, attr_p->gfid, attr_p->fid); fflush(NULL);
+    //         viter++;
+    //         tot_num++;
+    //         if (MAX_META_PER_SEND == tot_num) {
+    //             LOGERR("Error: maximum number of values!");
+    //             rc = UNIFYCR_FAILURE;
+    //             break;
+    //         }
+    //     }
+	// }
+
+    if (!bgrm || bgrm->error) {
+		printf("Rank: %d, Error getting next key/value given key: 0x%x from MDHIM (error: %d)\n", 
+		       md->mdhim_rank, gfid, bgrm->error);
+	} else {
+        while (bgrm) {
+            bgrmp = bgrm;
+            if (bgrmp->error < 0) {
+                // TODO: need better error handling
+                printf("Got error\n");
+                rc = (int)UNIFYCR_ERROR_MDHIM;
+                return rc;
+            }
+
+            if (tot_num < MAX_META_PER_SEND) {
+                printf("# keys = %d\n", bgrmp->num_keys);
+                for (i = 0; i < bgrmp->num_keys; i++) {
+                    attr_p = (unifycr_file_attr_t*)(bgrmp->values[i]);
+                    memcpy(viter, attr_p, sizeof(unifycr_file_attr_t));
+                    printf("viter: {gfid: 0x%x, fid: 0x%x}, attr_p: {gfid: 0x%x, fid: 0x%x}\n", viter->gfid, viter->fid, attr_p->gfid, attr_p->fid); fflush(NULL);
+                    viter++;
+                    tot_num++;
+                    if (MAX_META_PER_SEND == tot_num) {
+                        LOGERR("Error: maximum number of values!");
+                        rc = UNIFYCR_FAILURE;
+                        break;
+                    }
+                }
+            }
+            bgrm = bgrmp->next;
+            mdhim_full_release_msg(bgrmp);
+        }
+    }
+
+
+
+    // printf("Before mdhimBGetOp\n");fflush(NULL);
+    // bgrm = mdhimBGetOp(md, unify_sec_indexes[0], 
+	// 			       &gfid, sizeof(gfid), 1, MDHIM_GET_NEXT);
+    // printf("After mdhimBGetOp\n");fflush(NULL);
+	// 	if (!bgrm || bgrm->error) {
+	// 		printf("Rank: %d, Error getting next key/value given key: 0x%x from MDHIM (error: %d)\n", 
+	// 		       md->mdhim_rank, gfid, bgrm->error);
+	// 	} else if (bgrm->keys && bgrm->values) {
+    //         attr_p = (unifycr_file_attr_t*)(bgrmp->values[0]);
+    //         memcpy(viter, attr_p, sizeof(unifycr_file_attr_t));
+    //         printf("viter: {gfid: 0x%x, fid: 0x%x}, attr_p: {gfid: 0x%x, fid: 0x%x}\n", viter->gfid, viter->fid, attr_p->gfid, attr_p->fid); fflush(NULL);
+	// 	}
+
+	// 	mdhim_full_release_msg(bgrm);
+
+    // get the primary keys
+    // bgrm = mdhimGet(md, unify_sec_indexes[0], 
+	// 		&gfid, sizeof(int), 
+	// 		MDHIM_GET_PRIMARY_EQ);
+    // if (!bgrm || bgrm->error) {
+	// 	printf("Error getting value for key: 0x%x from MDHIM\n", gfid);
+	// } else if (bgrm->value_lens[0]) {
+	// 	printf("Successfully got value: 0x%x from MDHIM\n", *((int *) bgrm->values[0]));
+	// }
+
+    *num_values = tot_num;
     return rc;
 }
 
