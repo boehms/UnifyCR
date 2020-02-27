@@ -43,6 +43,9 @@
 #include "indexes.h"
 #include "mdhim.h"
 
+/* maps a global file id to its extent map */
+struct gfid2ext_tree meta_gfid2ext;
+
 struct mdhim_t* md;
 
 /* we use two MDHIM indexes:
@@ -152,6 +155,9 @@ int meta_init_store(unifyfs_cfg_t* cfg)
     unifyfs_indexes[IDX_FILE_ATTR] = create_global_index(md,
         ratio, 1, LEVELDB, MDHIM_INT_KEY, "file_attr");
 
+    /* initialize our tree that maps a gfid to its extent tree */
+    gfid2ext_tree_init(&meta_gfid2ext);
+
     return 0;
 }
 
@@ -201,6 +207,9 @@ int meta_sanitize(void)
     if (rc) {
         LOGERR("failure during MDHIM file tree removal");
     }
+
+    /* tear down gfid-to-extents tree */
+    gfid2ext_tree_destroy(&meta_gfid2ext);
 
     return UNIFYFS_SUCCESS;
 }

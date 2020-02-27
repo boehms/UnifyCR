@@ -71,6 +71,10 @@ extern int glb_pmi_rank, glb_pmi_size;
 /* maps a global file id to its extent map */
 extern struct gfid2ext_tree glb_gfid2ext;
 
+/* maps a global file id to its metadata extent map
+ * TODO: move to metadata? */
+extern struct gfid2ext_tree meta_gfid2ext;
+
 /* stack to manage free communication tags */
 void* glb_tag_stack;
 
