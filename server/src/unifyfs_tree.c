@@ -1293,7 +1293,7 @@ static int rpc_invoke_extbcast_request(extbcast_request_in_t *in, unifyfs_coll_r
     int rc = (int)UNIFYFS_SUCCESS;
 
     /* call rpc function */
-    hg_return_t hret = margo_iforward(request->handle, in, request->request);
+    hg_return_t hret = margo_iforward(request->handle, in, &request->request);
     assert(hret == HG_SUCCESS);
 
     return rc;
@@ -1379,19 +1379,24 @@ static void extbcast_request_rpc(hg_handle_t handle)
     int root     = (int) in.root;
     int gfid     = (int) in.gfid;
     int32_t ptag = (int32_t) in.tag;
-    int32_t num_extends = (int32_t) in.num_extends;
+    int32_t num_extents = (int32_t) in.num_extends;
 
     /* allocate memory for extends */
     struct extent_tree_node* extents;
-    extents = calloc(num_extends, sizeof(struct extent_tree_node));
+    extents = calloc(num_extents, sizeof(struct extent_tree_node));
 
     /* get client address */
     const struct hg_info* info = margo_get_info(handle);
     hg_addr_t client_address = info->addr;
 
+    hg_size_t *buf_sizes = malloc(num_extents * sizeof(hg_size_t));
+    for (int i=0; i < num_extents; i++) {
+        buf_sizes[i] = sizeof(struct extent_tree_node);
+    }
+
     /* expose local bulk buffer */
     hg_bulk_t extent_data;
-    margo_bulk_create(mid, num_extends, &extents, sizeof(struct extent_tree_node), HG_BULK_READWRITE, &extent_data);
+    margo_bulk_create(mid, num_extents, &extents, buf_sizes, HG_BULK_READWRITE, &extent_data);
 
     /* request for bulk transfer */
     margo_request bulk_request;
@@ -1401,7 +1406,7 @@ static void extbcast_request_rpc(hg_handle_t handle)
     margo_bulk_itransfer(mid, HG_BULK_PULL, client_address,
                          in.exttree, 0,
                          extent_data, 0,
-                         num_extends * sizeof(struct extent_tree_node),
+                         num_extents * sizeof(struct extent_tree_node),
                          &bulk_request);
 
     /* create communication tree */
@@ -1499,20 +1504,20 @@ DEFINE_MARGO_RPC_HANDLER(extbcast_request_rpc)
  */
 int unifyfs_broadcast_extend_tree(int gfid)
 {
-    printf("%d: BUCKEYES unifyfs_broadcast_extend_tree\n", glb_pmi_rank);
+    LOGDBG("%d: BUCKEYES unifyfs_broadcast_extend_tree\n", glb_pmi_rank);
 
     /* assuming success */
     int ret = UNIFYFS_SUCCESS;
 
     int root = glb_pmi_rank; /* root of the broadcast tree */
-    
+
     /* get extend tree for gfid */
     struct extent_tree* extent_tree;
     extent_tree = gfid2ext_tree_extents(&glb_gfid2ext, gfid);
 
     /* get # of extends in tree */
-    unsigned long num_extents = extent_tree_count(extent_tree);
-    hg_size_t size = num_extents * sizeof(struct extent_tree_node);
+    //unsigned long num_extents = extent_tree_count(extent_tree);
+    hg_size_t num_extents = extent_tree_count(extent_tree);
 
     /* create communication tree */
     unifyfs_tree_t bcast_tree;
@@ -1523,12 +1528,16 @@ int unifyfs_broadcast_extend_tree(int gfid)
     struct extent_tree_node** extents;
     extents = malloc(num_extents * sizeof(struct extent_tree_node*));
 
+    hg_size_t *buf_sizes = malloc(num_extents * sizeof(hg_size_t));
+
     // prepare extend array for bulk transfer
     struct extent_tree_node *node = NULL;
     int i = 0;
+    hg_size_t buf_size = sizeof(struct extent_tree_node);
     while ((node = extent_tree_iter(extent_tree, node))) {
-        printf("[%d-%d]", node->start, node->end);
-        extents[i++] = node;
+        LOGDBG("[%d-%d]", node->start, node->end);
+        extents[i] = node;
+        buf_sizes[i++] = buf_size;
     }
 
     /* get info for tree */
@@ -1540,7 +1549,7 @@ int unifyfs_broadcast_extend_tree(int gfid)
      * NOTE: bulk data is always read only at the root of the broadcast tree */
     hg_bulk_t extent_data;
     margo_bulk_create(unifyfsd_rpc_context->svr_mid, num_extents,
-                      extents, sizeof(struct extent_tree_node),
+                      extents, buf_sizes,
                       HG_BULK_READ_ONLY, &extent_data);
 
     // get tag for collective
